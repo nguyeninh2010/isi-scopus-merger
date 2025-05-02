@@ -17,8 +17,13 @@ def convert_isi_bibtex_to_scopus(df):
     converted["Year"] = df.get("year", "")
     converted["DOI"] = df.get("doi", "")
     converted["Author Keywords"] = df.get("keywords", "")
-    converted["Affiliations"] = df.get("institution", df.get("note", ""))
-    converted["References"] = ""
+    
+    # ✅ Ưu tiên 'institution', fallback sang 'note' nếu không có
+    converted["Affiliations"] = df.get("institution", pd.NA).fillna(df.get("note", ""))
+    
+    # ✅ Cố gắng lấy 'references' nếu có
+    converted["References"] = df.get("references", "")
+
     return converted
 
 def merge_datasets(df1, df2):
@@ -55,11 +60,6 @@ def convert_df_for_export(df):
         "Title", "Authors", "Source title", "Year", "DOI",
         "Author Keywords", "Index Keywords", "Affiliations", "References"
     ]]
-
-    export_df.columns = [
-        "Title", "Authors", "Source title", "Year", "DOI",
-        "Author Keywords", "Index Keywords", "Affiliations", "References"
-    ]
 
     buffer = BytesIO()
     export_df.to_csv(buffer, index=False)
@@ -114,7 +114,6 @@ if file2:
     except Exception as e:
         st.error(f"❌ Lỗi khi xử lý file Scopus: {e}")
 
-# Khi cả hai file đã được nạp
 if isi_df is not None and scopus_df is not None:
     required_cols = ["Title", "Authors", "DOI"]
     warnings = []
