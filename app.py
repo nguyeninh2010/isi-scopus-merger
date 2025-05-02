@@ -25,7 +25,6 @@ def map_columns(df, source):
 def merge_datasets(df1, df2):
     df1['title_clean'] = df1['title'].apply(clean_title)
     df2['title_clean'] = df2['title'].apply(clean_title)
-
     merged = pd.merge(df1, df2, on='doi', how='outer', suffixes=('_isi', '_scopus'))
 
     no_doi_isi = df1[df1['doi'].isnull()]
@@ -43,7 +42,6 @@ def merge_datasets(df1, df2):
                     suffixes=('_isi', '_scopus')
                 )
                 merged = pd.concat([merged, merged_row])
-
     merged.drop(columns=['title_clean'], inplace=True, errors='ignore')
     return merged
 
@@ -81,7 +79,6 @@ def convert_df(df, output_format='scopus'):
             'references_isi': 'CR'
         }
 
-    # Bổ sung các cột trống nếu thiếu
     for col in columns_to_keep:
         if col not in df.columns:
             df[col] = ""
@@ -129,6 +126,17 @@ if file1 and file2:
 
         df1 = map_columns(df1, source='isi')
         df2 = map_columns(df2, source='scopus')
+
+        # 🔔 CẢNH BÁO dữ liệu thiếu
+        for colname, label in [('authors', 'Tác giả (Authors)'), 
+                               ('author_keywords', 'Từ khóa của tác giả (Author Keywords)'),
+                               ('affiliations', 'Tổ chức (Affiliations)'),
+                               ('references', 'Tài liệu tham khảo (References)')]:
+            col1 = f'{colname}_isi'
+            col2 = f'{colname}_scopus'
+            if (col1 not in df1.columns or df1[col1].isnull().all()) and \
+               (col2 not in df2.columns or df2[col2].isnull().all()):
+                st.warning(f"⚠️ Thiếu dữ liệu: {label}. Vui lòng kiểm tra khi xuất file từ ISI/Scopus.")
 
         with st.spinner("⏳ Đang xử lý và ghép dữ liệu..."):
             merged_df = merge_datasets(df1, df2)
