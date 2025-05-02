@@ -17,11 +17,16 @@ def convert_isi_bibtex_to_scopus(df):
     converted["Year"] = df.get("year", "")
     converted["DOI"] = df.get("doi", "")
     converted["Author Keywords"] = df.get("keywords", "")
-    
-    # ✅ Ưu tiên 'institution', fallback sang 'note' nếu không có
-    converted["Affiliations"] = df.get("institution", pd.NA).fillna(df.get("note", ""))
-    
-    # ✅ Cố gắng lấy 'references' nếu có
+
+    # ✅ Affiliations: nếu có 'institution' thì dùng, nếu không thì thử 'note'
+    if "institution" in df.columns:
+        converted["Affiliations"] = df["institution"]
+    elif "note" in df.columns:
+        converted["Affiliations"] = df["note"]
+    else:
+        converted["Affiliations"] = ""
+
+    # ✅ References: nếu không có thì để trống
     converted["References"] = df.get("references", "")
 
     return converted
@@ -75,6 +80,7 @@ file2 = st.file_uploader("📄 Chọn file Scopus (.csv, .xlsx)", type=["csv", "
 
 isi_df, scopus_df = None, None
 
+# ===== Xử lý file ISI =====
 if file1:
     ext1 = file1.name.split(".")[-1].lower()
     try:
@@ -96,6 +102,7 @@ if file1:
     except Exception as e:
         st.error(f"❌ Lỗi khi xử lý file ISI: {e}")
 
+# ===== Xử lý file Scopus =====
 if file2:
     ext2 = file2.name.split(".")[-1].lower()
     try:
@@ -114,6 +121,7 @@ if file2:
     except Exception as e:
         st.error(f"❌ Lỗi khi xử lý file Scopus: {e}")
 
+# ===== Khi cả 2 file đều đã xử lý thành công =====
 if isi_df is not None and scopus_df is not None:
     required_cols = ["Title", "Authors", "DOI"]
     warnings = []
