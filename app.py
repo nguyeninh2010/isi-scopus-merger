@@ -1,103 +1,82 @@
 import streamlit as st
 import pandas as pd
-import difflib
-from io import BytesIO
 import bibtexparser
+from io import BytesIO
 
-def clean_title(title):
-    if pd.isnull(title):
-        return ""
-    return ''.join(e for e in title.lower().strip() if e.isalnum() or e.isspace())
+def convert_bibtex_to_scopus_structure(bib_data):
+    records = []
+    for entry in bib_data.entries:
+        record = {
+            "Title": entry.get("title", ""),
+            "Authors": entry.get("author", ""),
+            "Author full names": entry.get("author", ""),
+            "Affiliations": entry.get("affiliations", ""),
+            "Author Keywords": entry.get("keywords", "") or entry.get("keywords-plus", ""),
+            "References": entry.get("cited-references", ""),
+            "DOI": entry.get("doi", ""),
+            "Year": entry.get("year", ""),
+            "Source title": entry.get("journal", ""),
+            "Volume": entry.get("volume", ""),
+            "Issue": entry.get("number", ""),
+            "Page start": entry.get("pages", "").split("-")[0] if "pages" in entry else "",
+            "Page end": entry.get("pages", "").split("-")[-1] if "pages" in entry else ""
+        }
+        records.append(record)
+    return pd.DataFrame(records)
 
-def read_isi_bib_file(file):
-    bib_database = bibtexparser.load(file)
-    rows = []
-    for entry in bib_database.entries:
-        rows.append({
-            'Title': entry.get('title', ''),
-            'Authors': entry.get('author', ''),
-            'Source title': entry.get('journal', ''),
-            'Year': entry.get('year', ''),
-            'DOI': entry.get('doi', ''),
-            'Author Keywords': entry.get('keywords', ''),
-            'Affiliations': entry.get('affiliations') or entry.get('affiliation', ''),
-            'References': entry.get('cited-references') or entry.get('cited_references') or entry.get('citedreferences', ''),
-        })
-    return pd.DataFrame(rows)
-
-def map_columns(df, source):
-    if source == 'isi':
-        return df.rename(columns={
-            'Title': 'title', 'Authors': 'authors', 'Source title': 'journal',
-            'Year': 'year', 'DOI': 'doi', 'Author Keywords': 'keywords',
-            'Affiliations': 'affiliations', 'References': 'references'
-        })
-    elif source == 'scopus':
-        return df.rename(columns={
-            'Title': 'title', 'Authors': 'authors', 'Source title': 'journal',
-            'Year': 'year', 'DOI': 'doi', 'Author Keywords': 'keywords',
-            'Affiliations': 'affiliations', 'References': 'references'
-        })
-    return df
-
-def merge_datasets(df1, df2):
-    df1['title_clean'] = df1['title'].apply(clean_title)
-    df2['title_clean'] = df2['title'].apply(clean_title)
-    merged = pd.merge(df1, df2, on='doi', how='outer', suffixes=('_isi', '_scopus'))
-    no_doi_isi = df1[df1['doi'].isnull()]
-    no_doi_scopus = df2[df2['doi'].isnull()]
-    for _, row in no_doi_isi.iterrows():
-        matches = difflib.get_close_matches(row['title_clean'], no_doi_scopus['title_clean'], n=1, cutoff=0.95)
-        if matches:
-            matched_row = no_doi_scopus[no_doi_scopus['title_clean'] == matches[0]]
-            if not matched_row.empty:
-                merged = pd.concat([merged, pd.merge(row.to_frame().T, matched_row, on='title_clean', how='inner', suffixes=('_isi', '_scopus'))])
-    return merged.drop(columns='title_clean', errors='ignore')
+def convert_excel_or_csv(file):
+    ext = file.name.split(".")[-1]
+    if ext == "xlsx":
+        return pd.read_excel(file)
+    elif ext == "csv":
+        return pd.read_csv(file)
+    else:
+        return pd.DataFrame()
 
 def convert_df(df):
-    buffer = BytesIO()
-    df.to_csv(buffer, index=False)
-    return buffer.getvalue()
+    output = BytesIO()
+    df.to_csv(output, index=False)
+    return output.getvalue()
 
-# Streamlit UI
-st.title("🔗 Kết nối dữ liệu ISI & Scopus")
+st.title("📘 Kết nối dữ liệu ISI & Scopus theo chuẩn Scopus")
 
-file1 = st.file_uploader("📄 Chọn file ISI (.bib, .csv, .xlsx)", type=["bib", "csv", "xlsx"])
-file2 = st.file_uploader("📄 Chọn file Scopus (.csv, .xlsx)", type=["csv", "xlsx"])
+isi_file = st.file_uploader("📤 Chọn file ISI (.bib, .csv, .xlsx)", type=["bib", "csv", "xlsx"])
+scopus_file = st.file_uploader("📤 Chọn file Scopus (.csv, .xlsx)", type=["csv", "xlsx"])
 
-df1, df2 = None, None
+df_isi = pd.DataFrame()
+df_scopus = pd.DataFrame()
 
-if file1:
+if isi_file:
+    st.subheader("🔎 Dữ liệu từ file ISI")
     try:
-        ext = file1.name.split('.')[-1].lower()
-        if ext == 'csv':
-            df1 = pd.read_csv(file1)
-        elif ext == 'xlsx':
-            df1 = pd.read_excel(file1)
-        elif ext == 'bib':
-            df1 = read_isi_bib_file(file1)
-        df1 = map_columns(df1, 'isi')
-        st.subheader("📘 Dữ liệu từ file ISI")
-        st.dataframe(df1.head(10))
+        if isi_file.name.endswith(".bib"):
+            bib_data = bibtexparser.load(isi_file)
+            df_isi = convert_bibtex_to_scopus_structure(bib_data)
+        else:
+            df_isi = convert_excel_or_csv(isi_file)
+        st.dataframe(df_isi.head(20))
     except Exception as e:
-        st.error(f"❌ Lỗi xử lý file ISI: {e}")
+        st.error(f"Lỗi khi xử lý file ISI: {e}")
 
-if file2:
+if scopus_file:
+    st.subheader("🔎 Dữ liệu từ file Scopus")
     try:
-        ext = file2.name.split('.')[-1].lower()
-        if ext == 'csv':
-            df2 = pd.read_csv(file2)
-        elif ext == 'xlsx':
-            df2 = pd.read_excel(file2)
-        df2 = map_columns(df2, 'scopus')
-        st.subheader("📙 Dữ liệu từ file Scopus")
-        st.dataframe(df2.head(10))
+        df_scopus = convert_excel_or_csv(scopus_file)
+        st.dataframe(df_scopus.head(20))
     except Exception as e:
-        st.error(f"❌ Lỗi xử lý file Scopus: {e}")
+        st.error(f"Lỗi khi xử lý file Scopus: {e}")
 
-if df1 is not None and df2 is not None:
-    with st.spinner("🛠️ Đang ghép dữ liệu..."):
-        merged = merge_datasets(df1, df2)
-    st.success("✅ Ghép dữ liệu hoàn tất!")
-    st.dataframe(merged.head(10))
-    st.download_button("📥 Tải file kết quả CSV", convert_df(merged), "merged_isi_scopus.csv", "text/csv")
+if not df_isi.empty and not df_scopus.empty:
+    st.subheader("🔗 Ghép dữ liệu theo DOI")
+    try:
+        df_isi["DOI"] = df_isi["DOI"].str.lower().str.strip()
+        df_scopus["DOI"] = df_scopus["DOI"].str.lower().str.strip()
+
+        merged = pd.merge(df_isi, df_scopus, on="DOI", how="outer", suffixes=('_isi', '_scopus'))
+        st.success("✅ Ghép dữ liệu hoàn tất!")
+        st.dataframe(merged.head(30))
+
+        csv = convert_df(merged)
+        st.download_button("📥 Tải file kết quả (CSV)", data=csv, file_name="merged_isi_scopus.csv", mime="text/csv")
+    except Exception as e:
+        st.error(f"Lỗi khi ghép dữ liệu: {e}")
