@@ -10,8 +10,15 @@ def clean_title(title):
     return ''.join(e for e in title.lower().strip() if e.isalnum() or e.isspace())
 
 def map_columns(df, source):
-    mapping_isi = {'TI': 'title', 'DI': 'doi', 'AU': 'authors', 'SO': 'journal', 'PY': 'year'}
-    mapping_scopus = {'Title': 'title', 'DOI': 'doi', 'Authors': 'authors', 'Source title': 'journal', 'Year': 'year'}
+    mapping_isi = {
+        'TI': 'title', 'DI': 'doi', 'AU': 'authors', 'SO': 'journal', 'PY': 'year',
+        'DE': 'author_keywords', 'ID': 'index_keywords', 'C1': 'affiliations', 'CR': 'references'
+    }
+    mapping_scopus = {
+        'Title': 'title', 'DOI': 'doi', 'Authors': 'authors', 'Source title': 'journal', 'Year': 'year',
+        'Author Keywords': 'author_keywords', 'Index Keywords': 'index_keywords',
+        'Affiliations': 'affiliations', 'References': 'references'
+    }
     mapping = mapping_isi if source == 'isi' else mapping_scopus
     return df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})
 
@@ -42,27 +49,44 @@ def merge_datasets(df1, df2):
 
 def convert_df(df, output_format='scopus'):
     if output_format == 'scopus':
-        columns_to_keep = ['title_scopus', 'authors_scopus', 'journal_scopus', 'year_scopus', 'doi']
+        columns_to_keep = [
+            'title_scopus', 'authors_scopus', 'journal_scopus', 'year_scopus', 'doi',
+            'author_keywords_scopus', 'index_keywords_scopus', 'affiliations_scopus', 'references_scopus'
+        ]
         rename_map = {
             'title_scopus': 'Title',
             'authors_scopus': 'Authors',
             'journal_scopus': 'Source title',
             'year_scopus': 'Year',
-            'doi': 'DOI'
+            'doi': 'DOI',
+            'author_keywords_scopus': 'Author Keywords',
+            'index_keywords_scopus': 'Index Keywords',
+            'affiliations_scopus': 'Affiliations',
+            'references_scopus': 'References'
         }
-    else:  # isi
-        columns_to_keep = ['title_isi', 'authors_isi', 'journal_isi', 'year_isi', 'doi']
+    else:
+        columns_to_keep = [
+            'title_isi', 'authors_isi', 'journal_isi', 'year_isi', 'doi',
+            'author_keywords_isi', 'index_keywords_isi', 'affiliations_isi', 'references_isi'
+        ]
         rename_map = {
             'title_isi': 'TI',
             'authors_isi': 'AU',
             'journal_isi': 'SO',
             'year_isi': 'PY',
-            'doi': 'DI'
+            'doi': 'DI',
+            'author_keywords_isi': 'DE',
+            'index_keywords_isi': 'ID',
+            'affiliations_isi': 'C1',
+            'references_isi': 'CR'
         }
 
-    columns_existing = [col for col in columns_to_keep if col in df.columns]
-    export_df = df[columns_existing].rename(columns=rename_map)
+    # Bổ sung các cột trống nếu thiếu
+    for col in columns_to_keep:
+        if col not in df.columns:
+            df[col] = ""
 
+    export_df = df[columns_to_keep].rename(columns=rename_map)
     output = BytesIO()
     export_df.to_csv(output, index=False)
     return output.getvalue()
@@ -126,4 +150,4 @@ if file1 and file2:
             mime='text/csv',
         )
     except Exception as e:
-        st.error(f"Đã xảy ra lỗi khi xử lý file: {str(e)}")
+        st.error(f"❌ Đã xảy ra lỗi khi xử lý: {str(e)}")
