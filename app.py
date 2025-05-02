@@ -4,8 +4,6 @@ import difflib
 from io import BytesIO
 import bibtexparser
 
-# ---------------------- Xử lý dữ liệu đầu vào ------------------------
-
 def clean_title(title):
     if pd.isnull(title):
         return ""
@@ -43,7 +41,6 @@ def merge_datasets(df1, df2):
     return merged
 
 def convert_df_for_export(df):
-    # ✅ Kết hợp dữ liệu từ Scopus và ISI, ưu tiên Scopus
     df["Title"] = df.get("Title_scopus").combine_first(df.get("Title_isi"))
     df["Authors"] = df.get("Authors_scopus").combine_first(df.get("Authors_isi"))
     df["Source title"] = df.get("Source title_scopus").combine_first(df.get("Source title_isi"))
@@ -76,26 +73,32 @@ st.title("🔗 Ứng dụng Ghép Dữ liệu ISI & Scopus (chuẩn VOSviewer)")
 file1 = st.file_uploader("📄 Chọn file ISI (.bib, .csv, .xlsx)", type=["bib", "csv", "xlsx"])
 file2 = st.file_uploader("📄 Chọn file Scopus (.csv, .xlsx)", type=["csv", "xlsx"])
 
-if file1 and file2:
+isi_df, scopus_df = None, None
+
+if file1:
+    ext1 = file1.name.split(".")[-1].lower()
     try:
-        # Xử lý file ISI
-        ext1 = file1.name.split(".")[-1].lower()
         if ext1 == "bib":
             bib_data = bibtexparser.load(file1)
             isi_raw_df = pd.DataFrame(bib_data.entries)
-            isi_df = convert_isi_bibtex_to_scopus(isi_raw_df)
         elif ext1 == "csv":
             isi_raw_df = pd.read_csv(file1)
-            isi_df = convert_isi_bibtex_to_scopus(isi_raw_df)
         elif ext1 == "xlsx":
             isi_raw_df = pd.read_excel(file1)
-            isi_df = convert_isi_bibtex_to_scopus(isi_raw_df)
         else:
             st.error("❌ Định dạng file ISI không hợp lệ.")
             st.stop()
+        isi_df = convert_isi_bibtex_to_scopus(isi_raw_df)
 
-        # Xử lý file Scopus
-        ext2 = file2.name.split(".")[-1].lower()
+        st.subheader("📑 Dữ liệu từ file ISI")
+        st.dataframe(isi_df.head(5), use_container_width=True)
+
+    except Exception as e:
+        st.error(f"❌ Lỗi khi xử lý file ISI: {e}")
+
+if file2:
+    ext2 = file2.name.split(".")[-1].lower()
+    try:
         if ext2 == "csv":
             scopus_df = pd.read_csv(file2)
         elif ext2 == "xlsx":
@@ -103,37 +106,38 @@ if file1 and file2:
         else:
             st.error("❌ Định dạng file Scopus không hợp lệ.")
             st.stop()
-
         scopus_df.columns = scopus_df.columns.str.strip()
 
-        # Cảnh báo thiếu dữ liệu
-        required_cols = ["Title", "Authors", "DOI"]
-        warnings = []
-        for col in required_cols:
-            if col not in isi_df.columns or isi_df[col].isnull().all():
-                warnings.append(f"📁 ISI thiếu hoặc trống: `{col}`")
-            if col not in scopus_df.columns or scopus_df[col].isnull().all():
-                warnings.append(f"📁 Scopus thiếu hoặc trống: `{col}`")
-
-        if warnings:
-            st.warning("⚠️ Một số trường dữ liệu bị thiếu:")
-            for w in warnings:
-                st.markdown(f"- {w}")
-
-        # Ghép dữ liệu
-        with st.spinner("🔄 Đang xử lý và ghép dữ liệu..."):
-            merged_df = merge_datasets(isi_df, scopus_df)
-
-        st.success("✅ Ghép dữ liệu hoàn tất!")
-        st.dataframe(merged_df.head(50), use_container_width=True)
-
-        # Kiểm tra số lượng tác giả
-        all_authors = merged_df.get("Authors_scopus").combine_first(merged_df.get("Authors_isi")).dropna()
-        if all_authors.nunique() < 3:
-            st.error("❌ Dữ liệu cần ít nhất 3 tác giả khác nhau để dùng với VOSviewer.")
-        else:
-            csv = convert_df_for_export(merged_df)
-            st.download_button("📥 Tải xuống CSV chuẩn Scopus", data=csv, file_name="merged_scopus.csv", mime="text/csv")
+        st.subheader("📑 Dữ liệu từ file Scopus")
+        st.dataframe(scopus_df.head(5), use_container_width=True)
 
     except Exception as e:
-        st.error(f"❌ Đã xảy ra lỗi: {e}")
+        st.error(f"❌ Lỗi khi xử lý file Scopus: {e}")
+
+# Khi cả hai file đã được nạp
+if isi_df is not None and scopus_df is not None:
+    required_cols = ["Title", "Authors", "DOI"]
+    warnings = []
+    for col in required_cols:
+        if col not in isi_df.columns or isi_df[col].isnull().all():
+            warnings.append(f"📁 ISI thiếu hoặc trống: `{col}`")
+        if col not in scopus_df.columns or scopus_df[col].isnull().all():
+            warnings.append(f"📁 Scopus thiếu hoặc trống: `{col}`")
+
+    if warnings:
+        st.warning("⚠️ Một số trường dữ liệu bị thiếu:")
+        for w in warnings:
+            st.markdown(f"- {w}")
+
+    with st.spinner("🔄 Đang xử lý và ghép dữ liệu..."):
+        merged_df = merge_datasets(isi_df, scopus_df)
+
+    st.success("✅ Ghép dữ liệu hoàn tất!")
+    st.dataframe(merged_df.head(50), use_container_width=True)
+
+    all_authors = merged_df.get("Authors_scopus").combine_first(merged_df.get("Authors_isi")).dropna()
+    if all_authors.nunique() < 3:
+        st.error("❌ Dữ liệu cần ít nhất 3 tác giả khác nhau để dùng với VOSviewer.")
+    else:
+        csv = convert_df_for_export(merged_df)
+        st.download_button("📥 Tải xuống CSV chuẩn Scopus", data=csv, file_name="merged_scopus.csv", mime="text/csv")
