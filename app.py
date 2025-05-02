@@ -4,7 +4,7 @@ import difflib
 from io import BytesIO
 import bibtexparser
 
-# ---------------------- Tiền xử lý dữ liệu ------------------------
+# ---------------------- Xử lý dữ liệu đầu vào ------------------------
 
 def clean_title(title):
     if pd.isnull(title):
@@ -12,7 +12,6 @@ def clean_title(title):
     return ''.join(e for e in title.lower().strip() if e.isalnum() or e.isspace())
 
 def convert_isi_bibtex_to_scopus(df):
-    """Chuyển đổi BibTeX từ ISI sang định dạng gần giống Scopus."""
     converted = pd.DataFrame()
     converted["Title"] = df.get("title", "")
     converted["Authors"] = df.get("author", "")
@@ -30,31 +29,43 @@ def merge_datasets(df1, df2):
 
     merged = pd.merge(df1, df2, on="DOI", how="outer", suffixes=('_isi', '_scopus'))
 
-    no_doi_isi = df1[df1['DOI'].isnull()]
-    no_doi_scopus = df2[df2['DOI'].isnull()]
+    no_doi_isi = df1[df1["DOI"].isnull()]
+    no_doi_scopus = df2[df2["DOI"].isnull()]
     for idx, row in no_doi_isi.iterrows():
-        matches = difflib.get_close_matches(row['title_clean'], no_doi_scopus['title_clean'], n=1, cutoff=0.95)
+        matches = difflib.get_close_matches(row["title_clean"], no_doi_scopus["title_clean"], n=1, cutoff=0.95)
         if matches:
-            match_row = no_doi_scopus[no_doi_scopus['title_clean'] == matches[0]]
+            match_row = no_doi_scopus[no_doi_scopus["title_clean"] == matches[0]]
             if not match_row.empty:
-                merged_row = pd.merge(row.to_frame().T, match_row, on='title_clean', how='inner')
+                merged_row = pd.merge(row.to_frame().T, match_row, on="title_clean", how="inner")
                 merged = pd.concat([merged, merged_row])
 
     merged.drop(columns=["title_clean"], inplace=True, errors="ignore")
     return merged
 
 def convert_df_for_export(df):
+    # ✅ Ưu tiên Scopus, thay thế nếu thiếu bằng ISI
+    df["Title"] = df.get("Title_scopus", "").fillna(df.get("Title_isi", ""))
+    df["Authors"] = df.get("Authors_scopus", "").fillna(df.get("Authors_isi", ""))
+    df["Source title"] = df.get("Source title_scopus", "").fillna(df.get("Source title_isi", ""))
+    df["Year"] = df.get("Year_scopus", "").fillna(df.get("Year_isi", ""))
+    df["DOI"] = df.get("DOI", "")
+    df["Author Keywords"] = df.get("Author Keywords_scopus", "").fillna(df.get("Author Keywords_isi", ""))
+    df["Affiliations"] = df.get("Affiliations_scopus", "").fillna(df.get("Affiliations_isi", ""))
+    df["References"] = df.get("References_scopus", "").fillna(df.get("References_isi", ""))
+
     columns = ["Title", "Authors", "Source title", "Year", "DOI",
-               "Author Keywords", "Index Keywords", "Affiliations", "References"]
+               "Author Keywords", "Affiliations", "References"]
+
     for col in columns:
         if col not in df.columns:
             df[col] = ""
-    export = df[columns]
+
+    export_df = df[columns]
     buffer = BytesIO()
-    export.to_csv(buffer, index=False)
+    export_df.to_csv(buffer, index=False)
     return buffer.getvalue()
 
-# ---------------------- Giao diện Streamlit ------------------------
+# ---------------------- Giao diện người dùng ------------------------
 
 st.set_page_config(page_title="Ghép dữ liệu ISI và Scopus", layout="wide")
 st.title("🔗 Ứng dụng Ghép Dữ liệu ISI & Scopus (chuẩn Scopus)")
@@ -64,7 +75,7 @@ file2 = st.file_uploader("📄 Chọn file Scopus (.csv, .xlsx)", type=["csv", "
 
 if file1 and file2:
     try:
-        # Đọc ISI
+        # Xử lý file ISI
         ext1 = file1.name.split(".")[-1].lower()
         if ext1 == "bib":
             bib_data = bibtexparser.load(file1)
@@ -80,7 +91,7 @@ if file1 and file2:
             st.error("❌ Định dạng file ISI không hợp lệ.")
             st.stop()
 
-        # Đọc Scopus
+        # Xử lý file Scopus
         ext2 = file2.name.split(".")[-1].lower()
         if ext2 == "csv":
             scopus_df = pd.read_csv(file2)
@@ -92,30 +103,36 @@ if file1 and file2:
 
         scopus_df.columns = scopus_df.columns.str.strip()
 
-        # ⚠️ Kiểm tra thiếu cột
+        # Cảnh báo nếu thiếu dữ liệu
         required_columns = ["Title", "Authors", "DOI"]
-        warning_msgs = []
+        warnings = []
 
         for col in required_columns:
             if col not in isi_df.columns or isi_df[col].isnull().all():
-                warning_msgs.append(f"📁 ISI thiếu cột hoặc trống: `{col}`")
+                warnings.append(f"📁 ISI thiếu hoặc trống cột `{col}`")
             if col not in scopus_df.columns or scopus_df[col].isnull().all():
-                warning_msgs.append(f"📁 Scopus thiếu cột hoặc trống: `{col}`")
+                warnings.append(f"📁 Scopus thiếu hoặc trống cột `{col}`")
 
-        if warning_msgs:
-            st.warning("⚠️ Kiểm tra dữ liệu:")
-            for msg in warning_msgs:
-                st.markdown(f"- {msg}")
+        if warnings:
+            st.warning("⚠️ Cảnh báo dữ liệu:")
+            for w in warnings:
+                st.markdown(f"- {w}")
 
         # Ghép dữ liệu
         with st.spinner("🔄 Đang xử lý và ghép dữ liệu..."):
-            merged = merge_datasets(isi_df, scopus_df)
+            merged_df = merge_datasets(isi_df, scopus_df)
 
         st.success("✅ Ghép dữ liệu hoàn tất!")
-        st.dataframe(merged.head(50), use_container_width=True)
+        st.dataframe(merged_df.head(50), use_container_width=True)
 
-        csv = convert_df_for_export(merged)
-        st.download_button("📥 Tải xuống dữ liệu (CSV chuẩn Scopus)", data=csv, file_name="merged_scopus.csv", mime="text/csv")
+        # Kiểm tra đủ số lượng tác giả khác nhau chưa
+        unique_authors = merged_df["Authors_scopus"].fillna(merged_df["Authors_isi"]).dropna().unique()
+        if len(unique_authors) < 3:
+            st.error("❌ Cần ít nhất 3 tác giả khác nhau để dùng với VOSviewer. Vui lòng nhập thêm dữ liệu.")
+        else:
+            # Tải xuống kết quả
+            csv = convert_df_for_export(merged_df)
+            st.download_button("📥 Tải xuống file CSV (chuẩn Scopus)", data=csv, file_name="merged_scopus.csv", mime="text/csv")
 
     except Exception as e:
-        st.error(f"❌ Lỗi xử lý: {e}")
+        st.error(f"❌ Lỗi trong quá trình xử lý: {e}")
