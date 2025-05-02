@@ -18,14 +18,21 @@ def convert_isi_bibtex_to_scopus(df):
     converted["DOI"] = df.get("doi", "")
     converted["Author Keywords"] = df.get("keywords", "")
 
-    if "institution" in df.columns:
-        converted["Affiliations"] = df["institution"]
-    elif "note" in df.columns:
-        converted["Affiliations"] = df["note"]
-    else:
-        converted["Affiliations"] = ""
+    # Gộp các trường tiềm năng cho Affiliations
+    converted["Affiliations"] = (
+        df.get("address", "")
+        .combine_first(df.get("organization", ""))
+        .combine_first(df.get("institution", ""))
+        .combine_first(df.get("note", ""))
+    )
 
-    converted["References"] = df.get("references", "")
+    # Gộp các trường tiềm năng cho References
+    converted["References"] = (
+        df.get("references", "")
+        .combine_first(df.get("annote", ""))
+        .combine_first(df.get("note", ""))
+    )
+
     return converted
 
 def merge_datasets(df1, df2):
