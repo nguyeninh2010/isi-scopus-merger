@@ -25,6 +25,7 @@ def map_columns(df, source):
 def merge_datasets(df1, df2):
     df1['title_clean'] = df1['title'].apply(clean_title)
     df2['title_clean'] = df2['title'].apply(clean_title)
+
     merged = pd.merge(df1, df2, on='doi', how='outer', suffixes=('_isi', '_scopus'))
 
     no_doi_isi = df1[df1['doi'].isnull()]
@@ -42,6 +43,7 @@ def merge_datasets(df1, df2):
                     suffixes=('_isi', '_scopus')
                 )
                 merged = pd.concat([merged, merged_row])
+
     merged.drop(columns=['title_clean'], inplace=True, errors='ignore')
     return merged
 
@@ -127,16 +129,24 @@ if file1 and file2:
         df1 = map_columns(df1, source='isi')
         df2 = map_columns(df2, source='scopus')
 
-        # 🔔 CẢNH BÁO dữ liệu thiếu
-        for colname, label in [('authors', 'Tác giả (Authors)'), 
-                               ('author_keywords', 'Từ khóa của tác giả (Author Keywords)'),
-                               ('affiliations', 'Tổ chức (Affiliations)'),
-                               ('references', 'Tài liệu tham khảo (References)')]:
-            col1 = f'{colname}_isi'
-            col2 = f'{colname}_scopus'
-            if (col1 not in df1.columns or df1[col1].isnull().all()) and \
-               (col2 not in df2.columns or df2[col2].isnull().all()):
-                st.warning(f"⚠️ Thiếu dữ liệu: {label}. Vui lòng kiểm tra khi xuất file từ ISI/Scopus.")
+        # 🔔 Hiển thị cảnh báo theo từng file
+        missing_warnings = []
+
+        for field, label in [('authors', 'Tác giả'), 
+                             ('author_keywords', 'Từ khóa của tác giả'),
+                             ('affiliations', 'Tổ chức'),
+                             ('references', 'Tài liệu tham khảo')]:
+            col1 = f'{field}_isi'
+            col2 = f'{field}_scopus'
+            if col1 not in df1.columns or df1[col1].isnull().all():
+                missing_warnings.append(f"📁 **ISI thiếu dữ liệu**: {label} (`{col1}`)")
+            if col2 not in df2.columns or df2[col2].isnull().all():
+                missing_warnings.append(f"📁 **Scopus thiếu dữ liệu**: {label} (`{col2}`)")
+
+        if missing_warnings:
+            st.warning("⚠️ Một số trường dữ liệu bị thiếu trong file đầu vào:")
+            for warn in missing_warnings:
+                st.markdown(f"- {warn}")
 
         with st.spinner("⏳ Đang xử lý và ghép dữ liệu..."):
             merged_df = merge_datasets(df1, df2)
