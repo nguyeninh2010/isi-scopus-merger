@@ -40,7 +40,7 @@ def convert_df(df):
 # Streamlit UI
 st.title("🔗 Kết nối dữ liệu ISI & Scopus")
 
-file1 = st.file_uploader("Chọn file ISI (.csv, .xlsx)", type=['csv', 'xlsx'])
+file1 = st.file_uploader("Chọn file ISI (.csv, .xlsx, .bib)", type=['csv', 'xlsx', 'bib'])
 file2 = st.file_uploader("Chọn file Scopus (.csv, .xlsx)", type=['csv', 'xlsx'])
 
 if file1 and file2:
