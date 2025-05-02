@@ -43,23 +43,22 @@ def merge_datasets(df1, df2):
     return merged
 
 def convert_df_for_export(df):
-    # Ưu tiên Scopus, thay thế nếu thiếu bằng ISI
-    df["Title"] = df.get("Title_scopus", "").fillna(df.get("Title_isi", ""))
-    df["Authors"] = df.get("Authors_scopus", "").fillna(df.get("Authors_isi", ""))
-    df["Source title"] = df.get("Source title_scopus", "").fillna(df.get("Source title_isi", ""))
-    df["Year"] = df.get("Year_scopus", "").fillna(df.get("Year_isi", ""))
-    df["DOI"] = df.get("DOI", "")
-    df["Author Keywords"] = df.get("Author Keywords_scopus", "").fillna(df.get("Author Keywords_isi", ""))
+    # ✅ Kết hợp dữ liệu từ Scopus và ISI, ưu tiên Scopus
+    df["Title"] = df.get("Title_scopus").combine_first(df.get("Title_isi"))
+    df["Authors"] = df.get("Authors_scopus").combine_first(df.get("Authors_isi"))
+    df["Source title"] = df.get("Source title_scopus").combine_first(df.get("Source title_isi"))
+    df["Year"] = df.get("Year_scopus").combine_first(df.get("Year_isi"))
+    df["DOI"] = df.get("DOI")
+    df["Author Keywords"] = df.get("Author Keywords_scopus").combine_first(df.get("Author Keywords_isi"))
     df["Index Keywords"] = df.get("Index Keywords_scopus", "")
-    df["Affiliations"] = df.get("Affiliations_scopus", "").fillna(df.get("Affiliations_isi", ""))
-    df["References"] = df.get("References_scopus", "").fillna(df.get("References_isi", ""))
+    df["Affiliations"] = df.get("Affiliations_scopus").combine_first(df.get("Affiliations_isi"))
+    df["References"] = df.get("References_scopus").combine_first(df.get("References_isi"))
 
     export_df = df[[
         "Title", "Authors", "Source title", "Year", "DOI",
         "Author Keywords", "Index Keywords", "Affiliations", "References"
     ]]
 
-    # ✅ Đảm bảo tên cột chuẩn Scopus, tránh lỗi VOSviewer
     export_df.columns = [
         "Title", "Authors", "Source title", "Year", "DOI",
         "Author Keywords", "Index Keywords", "Affiliations", "References"
@@ -72,14 +71,14 @@ def convert_df_for_export(df):
 # ---------------------- Giao diện người dùng ------------------------
 
 st.set_page_config(page_title="Ghép dữ liệu ISI và Scopus", layout="wide")
-st.title("🔗 Ứng dụng Ghép Dữ liệu ISI & Scopus (chuẩn Scopus cho VOSviewer)")
+st.title("🔗 Ứng dụng Ghép Dữ liệu ISI & Scopus (chuẩn VOSviewer)")
 
 file1 = st.file_uploader("📄 Chọn file ISI (.bib, .csv, .xlsx)", type=["bib", "csv", "xlsx"])
 file2 = st.file_uploader("📄 Chọn file Scopus (.csv, .xlsx)", type=["csv", "xlsx"])
 
 if file1 and file2:
     try:
-        # Xử lý ISI
+        # Xử lý file ISI
         ext1 = file1.name.split(".")[-1].lower()
         if ext1 == "bib":
             bib_data = bibtexparser.load(file1)
@@ -95,7 +94,7 @@ if file1 and file2:
             st.error("❌ Định dạng file ISI không hợp lệ.")
             st.stop()
 
-        # Xử lý Scopus
+        # Xử lý file Scopus
         ext2 = file2.name.split(".")[-1].lower()
         if ext2 == "csv":
             scopus_df = pd.read_csv(file2)
@@ -107,10 +106,10 @@ if file1 and file2:
 
         scopus_df.columns = scopus_df.columns.str.strip()
 
-        # Cảnh báo thiếu cột
-        required = ["Title", "Authors", "DOI"]
+        # Cảnh báo thiếu dữ liệu
+        required_cols = ["Title", "Authors", "DOI"]
         warnings = []
-        for col in required:
+        for col in required_cols:
             if col not in isi_df.columns or isi_df[col].isnull().all():
                 warnings.append(f"📁 ISI thiếu hoặc trống: `{col}`")
             if col not in scopus_df.columns or scopus_df[col].isnull().all():
@@ -121,6 +120,7 @@ if file1 and file2:
             for w in warnings:
                 st.markdown(f"- {w}")
 
+        # Ghép dữ liệu
         with st.spinner("🔄 Đang xử lý và ghép dữ liệu..."):
             merged_df = merge_datasets(isi_df, scopus_df)
 
@@ -128,7 +128,7 @@ if file1 and file2:
         st.dataframe(merged_df.head(50), use_container_width=True)
 
         # Kiểm tra số lượng tác giả
-        all_authors = merged_df.get("Authors_scopus", "").fillna(merged_df.get("Authors_isi", "")).dropna()
+        all_authors = merged_df.get("Authors_scopus").combine_first(merged_df.get("Authors_isi")).dropna()
         if all_authors.nunique() < 3:
             st.error("❌ Dữ liệu cần ít nhất 3 tác giả khác nhau để dùng với VOSviewer.")
         else:
