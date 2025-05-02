@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import difflib
 from io import BytesIO
+import bibtexparser
 
 def clean_title(title):
     if pd.isnull(title):
@@ -44,24 +45,41 @@ file1 = st.file_uploader("Chọn file ISI (.csv, .xlsx, .bib)", type=['csv', 'xl
 file2 = st.file_uploader("Chọn file Scopus (.csv, .xlsx)", type=['csv', 'xlsx'])
 
 if file1 and file2:
-    ext1 = file1.name.split('.')[-1]
-    ext2 = file2.name.split('.')[-1]
-    df1 = pd.read_csv(file1) if ext1 == 'csv' else pd.read_excel(file1)
-    df2 = pd.read_csv(file2) if ext2 == 'csv' else pd.read_excel(file2)
+    ext1 = file1.name.split('.')[-1].lower()
+    ext2 = file2.name.split('.')[-1].lower()
 
-    df1 = map_columns(df1, source='isi')
-    df2 = map_columns(df2, source='scopus')
+    if ext1 == 'csv':
+        df1 = pd.read_csv(file1)
+    elif ext1 == 'xlsx':
+        df1 = pd.read_excel(file1)
+    elif ext1 == 'bib':
+        bib_data = bibtexparser.load(file1)
+        records = bib_data.entries
+        df1 = pd.DataFrame(records)
+    else:
+        st.error("Định dạng file ISI không hợp lệ.")
 
-    with st.spinner("Đang xử lý và ghép dữ liệu..."):
-        merged_df = merge_datasets(df1, df2)
+    if ext2 == 'csv':
+        df2 = pd.read_csv(file2)
+    elif ext2 == 'xlsx':
+        df2 = pd.read_excel(file2)
+    else:
+        st.error("Định dạng file Scopus không hợp lệ.")
 
-    st.success("✅ Ghép dữ liệu hoàn tất!")
-    st.write(merged_df.head(50))
+    if 'df1' in locals() and 'df2' in locals():
+        df1 = map_columns(df1, source='isi')
+        df2 = map_columns(df2, source='scopus')
 
-    csv = convert_df(merged_df)
-    st.download_button(
-        label="📥 Tải file kết quả CSV",
-        data=csv,
-        file_name='merged_isi_scopus.csv',
-        mime='text/csv',
-    )
+        with st.spinner("Đang xử lý và ghép dữ liệu..."):
+            merged_df = merge_datasets(df1, df2)
+
+        st.success("✅ Ghép dữ liệu hoàn tất!")
+        st.write(merged_df.head(50))
+
+        csv = convert_df(merged_df)
+        st.download_button(
+            label="📥 Tải file kết quả CSV",
+            data=csv,
+            file_name='merged_isi_scopus.csv',
+            mime='text/csv',
+        )
