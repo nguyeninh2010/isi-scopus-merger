@@ -9,28 +9,32 @@ def clean_title(title):
         return ""
     return ''.join(e for e in title.lower().strip() if e.isalnum() or e.isspace())
 
+def safe_get_series(df, col):
+    """Trả về Series nếu tồn tại, nếu không trả Series rỗng"""
+    return df[col] if col in df.columns else pd.Series([None] * len(df))
+
 def convert_isi_bibtex_to_scopus(df):
     converted = pd.DataFrame()
-    converted["Title"] = df.get("title", "")
-    converted["Authors"] = df.get("author", "")
-    converted["Source title"] = df.get("journal", "")
-    converted["Year"] = df.get("year", "")
-    converted["DOI"] = df.get("doi", "")
-    converted["Author Keywords"] = df.get("keywords", "")
+    converted["Title"] = safe_get_series(df, "title")
+    converted["Authors"] = safe_get_series(df, "author")
+    converted["Source title"] = safe_get_series(df, "journal")
+    converted["Year"] = safe_get_series(df, "year")
+    converted["DOI"] = safe_get_series(df, "doi")
+    converted["Author Keywords"] = safe_get_series(df, "keywords")
 
-    # Gộp các trường tiềm năng cho Affiliations
+    # Lấy thông tin Affiliations từ nhiều trường
     converted["Affiliations"] = (
-        df.get("address", "")
-        .combine_first(df.get("organization", ""))
-        .combine_first(df.get("institution", ""))
-        .combine_first(df.get("note", ""))
+        safe_get_series(df, "address")
+        .combine_first(safe_get_series(df, "organization"))
+        .combine_first(safe_get_series(df, "institution"))
+        .combine_first(safe_get_series(df, "note"))
     )
 
-    # Gộp các trường tiềm năng cho References
+    # Lấy thông tin References từ các trường liên quan
     converted["References"] = (
-        df.get("references", "")
-        .combine_first(df.get("annote", ""))
-        .combine_first(df.get("note", ""))
+        safe_get_series(df, "references")
+        .combine_first(safe_get_series(df, "annote"))
+        .combine_first(safe_get_series(df, "note"))
     )
 
     return converted
@@ -80,10 +84,10 @@ def convert_df_for_export(df):
     export_df.to_csv(buffer, index=False)
     return buffer.getvalue()
 
-# ---------------------- Giao diện ------------------------
+# ---------------------- Streamlit UI ------------------------
 
 st.set_page_config(page_title="Ghép dữ liệu ISI & Scopus", layout="wide")
-st.title("🔗 Ứng dụng Ghép Dữ liệu ISI & Scopus (chuẩn Scopus + VOSviewer)")
+st.title("🔗 Ứng dụng Ghép Dữ liệu ISI & Scopus (chuẩn VOSviewer & Scopus)")
 
 file1 = st.file_uploader("📄 Chọn file ISI (.bib, .csv, .xlsx)", type=["bib", "csv", "xlsx"])
 file2 = st.file_uploader("📄 Chọn file Scopus (.csv, .xlsx)", type=["csv", "xlsx"])
