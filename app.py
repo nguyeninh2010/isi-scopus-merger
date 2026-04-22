@@ -26,8 +26,7 @@ def clean_doi(x):
     x = x.replace("https://doi.org/", "")
     x = x.replace("http://doi.org/", "")
     x = x.replace("doi:", "")
-    x = x.strip()
-    return x
+    return x.strip()
 
 def normalize_title(x):
     x = clean_text(x).lower()
@@ -200,10 +199,7 @@ def standardize_columns(df):
 
     df["DOI"] = df["DOI"].apply(clean_doi)
     df["Title"] = df["Title"].apply(clean_text)
-
-    # xử lý Year an toàn để tránh lỗi str-int khi sort
     df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
-
     df["Title_key"] = df["Title"].apply(normalize_title)
 
     df["DE"] = df["DE"].apply(normalize_keywords)
@@ -347,16 +343,60 @@ def merge_main_records(merged_doi):
     final["DE_ID"] = final.apply(lambda row: merge_keyword_fields(row["DE"], row["ID"]), axis=1)
     final["Keyword_Source"] = final.apply(lambda row: detect_keyword_source(row["DE"], row["ID"]), axis=1)
     final["Title_key"] = final["Title"].apply(normalize_title)
-
     final["Year"] = pd.to_numeric(final["Year"], errors="coerce").astype("Int64")
 
     return final
+
+# =========================
+# TẠO FILE CHUẨN CHO VOSVIEWER
+# =========================
+def create_vosviewer_export(df, keyword_mode="DE"):
+    vos = df.copy()
+
+    if keyword_mode == "DE":
+        vos["Author Keywords"] = vos["DE"]
+        vos["Index Keywords"] = vos["ID"]
+    elif keyword_mode == "DE_ID":
+        vos["Author Keywords"] = vos["DE_ID"]
+        vos["Index Keywords"] = vos["ID"]
+    else:
+        vos["Author Keywords"] = vos["DE"]
+        vos["Index Keywords"] = vos["ID"]
+
+    export_cols = [
+        "Title",
+        "Authors",
+        "Author Keywords",
+        "Index Keywords",
+        "Year",
+        "Source title",
+        "DOI"
+    ]
+
+    for col in export_cols:
+        if col not in vos.columns:
+            vos[col] = ""
+
+    return vos[export_cols]
 
 # =========================
 # GIAO DIỆN
 # =========================
 st.set_page_config(page_title="Kết nối dữ liệu ISI & Scopus", layout="wide")
 st.title("📘 Kết nối dữ liệu ISI & Scopus theo chuẩn phân tích từ khóa")
+
+st.markdown("### Tùy chọn export cho VOSviewer")
+keyword_mode = st.radio(
+    "Chọn cách đưa từ khóa vào cột Author Keywords",
+    options=["DE", "DE_ID"],
+    index=0,
+    horizontal=True
+)
+
+if keyword_mode == "DE":
+    st.caption("Dùng Author Keywords = DE. Phù hợp khi muốn bám sát từ khóa tác giả.")
+else:
+    st.caption("Dùng Author Keywords = DE_ID. Phù hợp khi muốn mở rộng mạng đồng xuất hiện.")
 
 isi_file = st.file_uploader("📤 Chọn file ISI (.bib, .csv, .xlsx)", type=["bib", "csv", "xlsx"])
 scopus_file = st.file_uploader("📤 Chọn file Scopus (.csv, .xlsx)", type=["csv", "xlsx"])
@@ -398,7 +438,6 @@ if not df_isi.empty and not df_scopus.empty:
     st.subheader("🔗 Ghép dữ liệu")
 
     try:
-        # 1. nhóm có DOI
         isi_with_doi = df_isi[df_isi["DOI"] != ""].copy()
         scopus_with_doi = df_scopus[df_scopus["DOI"] != ""].copy()
 
@@ -412,19 +451,16 @@ if not df_isi.empty and not df_scopus.empty:
 
         final_doi = merge_main_records(merged_doi)
 
-        # 2. nhóm không DOI
         isi_no_doi = df_isi[df_isi["DOI"] == ""].copy()
         scopus_no_doi = df_scopus[df_scopus["DOI"] == ""].copy()
 
         no_doi = pd.concat([isi_no_doi, scopus_no_doi], ignore_index=True)
-
         no_doi["Year"] = pd.to_numeric(no_doi["Year"], errors="coerce").astype("Int64")
         no_doi["Title_key"] = no_doi["Title"].apply(normalize_title)
 
         no_doi = no_doi.sort_values(by=["Year"], ascending=False, na_position="last")
         no_doi = no_doi.drop_duplicates(subset=["Title_key"], keep="first")
 
-        # 3. gộp lại
         merged = pd.concat([final_doi, no_doi], ignore_index=True)
 
         merged["DE"] = merged["DE"].apply(normalize_keywords)
@@ -434,7 +470,6 @@ if not df_isi.empty and not df_scopus.empty:
         merged["Title_key"] = merged["Title"].apply(normalize_title)
         merged["Year"] = pd.to_numeric(merged["Year"], errors="coerce").astype("Int64")
 
-        # 4. bỏ trùng lần cuối
         merged = merged.sort_values(by=["Year"], ascending=False, na_position="last")
 
         with_doi = merged[merged["DOI"] != ""].drop_duplicates(subset=["DOI"], keep="first")
@@ -442,7 +477,6 @@ if not df_isi.empty and not df_scopus.empty:
 
         merged = pd.concat([with_doi, without_doi], ignore_index=True)
 
-        # 5. chọn cột đầu ra
         for col in OUTPUT_COLUMNS:
             if col not in merged.columns:
                 merged[col] = ""
@@ -457,13 +491,28 @@ if not df_isi.empty and not df_scopus.empty:
 
         st.dataframe(merged.head(30))
 
-        csv = convert_df(merged)
+        # file đầy đủ
+        csv_full = convert_df(merged)
         st.download_button(
-            "📥 Tải file kết quả (CSV)",
-            data=csv,
+            "📥 Tải file merged đầy đủ (CSV)",
+            data=csv_full,
             file_name="merged_isi_scopus_keywords_cleaned.csv",
             mime="text/csv"
         )
+
+        # file chuẩn VOSviewer
+        vos_df = create_vosviewer_export(merged, keyword_mode=keyword_mode)
+        csv_vos = convert_df(vos_df)
+
+        st.download_button(
+            "📥 Tải file chuẩn cho VOSviewer (CSV)",
+            data=csv_vos,
+            file_name=f"vosviewer_ready_{keyword_mode.lower()}.csv",
+            mime="text/csv"
+        )
+
+        st.subheader("🔎 Xem trước file xuất cho VOSviewer")
+        st.dataframe(vos_df.head(20))
 
     except Exception as e:
         st.error(f"Lỗi khi ghép dữ liệu: {e}")
