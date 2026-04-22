@@ -23,13 +23,15 @@ def clean_text(x):
 
 def clean_doi(x):
     x = clean_text(x).lower()
-    x = x.replace("https://doi.org/", "").replace("http://doi.org/", "")
-    x = x.replace("doi:", "").strip()
+    x = x.replace("https://doi.org/", "")
+    x = x.replace("http://doi.org/", "")
+    x = x.replace("doi:", "")
+    x = x.strip()
     return x
 
 def normalize_title(x):
     x = clean_text(x).lower()
-    x = re.sub(r"[^\w\s]", "", x)
+    x = re.sub(r"[^\w\s]", " ", x)
     x = re.sub(r"\s+", " ", x).strip()
     return x
 
@@ -54,21 +56,16 @@ def pick_first_nonempty(entry, keys):
 # =========================
 def standardize_keyword_token(token):
     token = clean_text(token).lower()
-
-    # bỏ dấu chấm cuối hoặc đầu
     token = token.strip(" .;,:")
 
-    # thống nhất khoảng trắng và nối
     token = token.replace("&", "and")
     token = re.sub(r"[-_/]+", " ", token)
     token = re.sub(r"\s+", " ", token).strip()
 
-    # từ điển chuẩn hóa cơ bản
     replacements = {
         "agri tourism": "agritourism",
         "agri tourist": "agritourism",
         "agri tourisms": "agritourism",
-        "agri food tourism": "agrifood tourism",
         "agro tourism": "agrotourism",
         "agro tourisms": "agrotourism",
         "agro tourist": "agrotourism",
@@ -91,7 +88,6 @@ def normalize_keywords(value):
     if not value:
         return ""
 
-    # thống nhất dấu phân cách
     value = value.replace("|", ";")
     value = value.replace(",", ";")
 
@@ -131,11 +127,12 @@ def detect_keyword_source(de, id_):
 
     if has_de and has_id:
         return "DE+ID"
-    if has_de:
+    elif has_de:
         return "DE only"
-    if has_id:
+    elif has_id:
         return "ID only"
-    return "No keywords"
+    else:
+        return "No keywords"
 
 # =========================
 # CHUẨN HÓA TÊN CỘT
@@ -147,11 +144,14 @@ def standardize_columns(df):
     rename_map = {
         "Article Title": "Title",
         "TI": "Title",
+
         "Authors": "Authors",
         "AU": "Authors",
+
         "Author full names": "Author full names",
         "Author Full Names": "Author full names",
         "AF": "Author full names",
+
         "Affiliations": "Affiliations",
         "C1": "Affiliations",
 
@@ -200,6 +200,10 @@ def standardize_columns(df):
 
     df["DOI"] = df["DOI"].apply(clean_doi)
     df["Title"] = df["Title"].apply(clean_text)
+
+    # xử lý Year an toàn để tránh lỗi str-int khi sort
+    df["Year"] = pd.to_numeric(df["Year"], errors="coerce").astype("Int64")
+
     df["Title_key"] = df["Title"].apply(normalize_title)
 
     df["DE"] = df["DE"].apply(normalize_keywords)
@@ -274,7 +278,7 @@ def convert_excel_or_csv(file):
     elif ext == "csv":
         try:
             df = pd.read_csv(file, encoding="utf-8")
-        except:
+        except Exception:
             file.seek(0)
             df = pd.read_csv(file, encoding="latin1")
     else:
@@ -291,11 +295,16 @@ def convert_df(df):
     return output.getvalue()
 
 # =========================
-# HÀM GỘP BẢN GHI
+# GỘP 2 CỘT ƯU TIÊN GIÁ TRỊ CÓ SẴN
 # =========================
 def combine_two_columns(series_a, series_b):
-    return series_a.combine_first(series_b)
+    a = series_a.copy()
+    b = series_b.copy()
+    return a.combine_first(b)
 
+# =========================
+# GHÉP NHÓM CÓ DOI
+# =========================
 def merge_main_records(merged_doi):
     final = pd.DataFrame()
     final["DOI"] = merged_doi["DOI"]
@@ -317,9 +326,8 @@ def merge_main_records(merged_doi):
         elif col_isi in merged_doi.columns:
             final[col] = merged_doi[col_isi]
         else:
-            final[col] = ""
+            final[col] = pd.Series([""] * len(merged_doi))
 
-    # gộp DE và ID từ cả hai nguồn
     final["DE"] = merged_doi.apply(
         lambda row: merge_keyword_fields(
             row.get("DE_scopus", ""),
@@ -340,10 +348,12 @@ def merge_main_records(merged_doi):
     final["Keyword_Source"] = final.apply(lambda row: detect_keyword_source(row["DE"], row["ID"]), axis=1)
     final["Title_key"] = final["Title"].apply(normalize_title)
 
+    final["Year"] = pd.to_numeric(final["Year"], errors="coerce").astype("Int64")
+
     return final
 
 # =========================
-# STREAMLIT UI
+# GIAO DIỆN
 # =========================
 st.set_page_config(page_title="Kết nối dữ liệu ISI & Scopus", layout="wide")
 st.title("📘 Kết nối dữ liệu ISI & Scopus theo chuẩn phân tích từ khóa")
@@ -357,16 +367,16 @@ df_scopus = pd.DataFrame()
 if isi_file:
     st.subheader("🔎 Dữ liệu từ file ISI")
     try:
-        if isi_file.name.endswith(".bib"):
+        if isi_file.name.lower().endswith(".bib"):
             bib_data = bibtexparser.load(isi_file)
             df_isi = convert_bibtex_to_standard_structure(bib_data)
         else:
             df_isi = convert_excel_or_csv(isi_file)
 
         st.write("Số bản ghi ISI:", len(df_isi))
-        st.write("ISI có DE:", (df_isi["DE"] != "").sum())
-        st.write("ISI có ID:", (df_isi["ID"] != "").sum())
-        st.write("ISI có DE_ID:", (df_isi["DE_ID"] != "").sum())
+        st.write("ISI có DE:", int((df_isi["DE"] != "").sum()))
+        st.write("ISI có ID:", int((df_isi["ID"] != "").sum()))
+        st.write("ISI có DE_ID:", int((df_isi["DE_ID"] != "").sum()))
         st.dataframe(df_isi.head(5))
     except Exception as e:
         st.error(f"Lỗi khi xử lý file ISI: {e}")
@@ -377,9 +387,9 @@ if scopus_file:
         df_scopus = convert_excel_or_csv(scopus_file)
 
         st.write("Số bản ghi Scopus:", len(df_scopus))
-        st.write("Scopus có DE:", (df_scopus["DE"] != "").sum())
-        st.write("Scopus có ID:", (df_scopus["ID"] != "").sum())
-        st.write("Scopus có DE_ID:", (df_scopus["DE_ID"] != "").sum())
+        st.write("Scopus có DE:", int((df_scopus["DE"] != "").sum()))
+        st.write("Scopus có ID:", int((df_scopus["ID"] != "").sum()))
+        st.write("Scopus có DE_ID:", int((df_scopus["DE_ID"] != "").sum()))
         st.dataframe(df_scopus.head(5))
     except Exception as e:
         st.error(f"Lỗi khi xử lý file Scopus: {e}")
@@ -388,7 +398,7 @@ if not df_isi.empty and not df_scopus.empty:
     st.subheader("🔗 Ghép dữ liệu")
 
     try:
-        # nhóm có DOI
+        # 1. nhóm có DOI
         isi_with_doi = df_isi[df_isi["DOI"] != ""].copy()
         scopus_with_doi = df_scopus[df_scopus["DOI"] != ""].copy()
 
@@ -402,18 +412,19 @@ if not df_isi.empty and not df_scopus.empty:
 
         final_doi = merge_main_records(merged_doi)
 
-        # nhóm không DOI
+        # 2. nhóm không DOI
         isi_no_doi = df_isi[df_isi["DOI"] == ""].copy()
         scopus_no_doi = df_scopus[df_scopus["DOI"] == ""].copy()
 
         no_doi = pd.concat([isi_no_doi, scopus_no_doi], ignore_index=True)
 
-        # chuẩn hóa lại và bỏ trùng theo title
+        no_doi["Year"] = pd.to_numeric(no_doi["Year"], errors="coerce").astype("Int64")
         no_doi["Title_key"] = no_doi["Title"].apply(normalize_title)
-        no_doi = no_doi.sort_values(by=["Year"], ascending=False)
+
+        no_doi = no_doi.sort_values(by=["Year"], ascending=False, na_position="last")
         no_doi = no_doi.drop_duplicates(subset=["Title_key"], keep="first")
 
-        # gộp lại
+        # 3. gộp lại
         merged = pd.concat([final_doi, no_doi], ignore_index=True)
 
         merged["DE"] = merged["DE"].apply(normalize_keywords)
@@ -421,22 +432,28 @@ if not df_isi.empty and not df_scopus.empty:
         merged["DE_ID"] = merged.apply(lambda row: merge_keyword_fields(row["DE"], row["ID"]), axis=1)
         merged["Keyword_Source"] = merged.apply(lambda row: detect_keyword_source(row["DE"], row["ID"]), axis=1)
         merged["Title_key"] = merged["Title"].apply(normalize_title)
+        merged["Year"] = pd.to_numeric(merged["Year"], errors="coerce").astype("Int64")
 
-        # bỏ trùng lần cuối
-        merged = merged.sort_values(by=["Year"], ascending=False)
+        # 4. bỏ trùng lần cuối
+        merged = merged.sort_values(by=["Year"], ascending=False, na_position="last")
 
         with_doi = merged[merged["DOI"] != ""].drop_duplicates(subset=["DOI"], keep="first")
         without_doi = merged[merged["DOI"] == ""].drop_duplicates(subset=["Title_key"], keep="first")
 
         merged = pd.concat([with_doi, without_doi], ignore_index=True)
 
+        # 5. chọn cột đầu ra
+        for col in OUTPUT_COLUMNS:
+            if col not in merged.columns:
+                merged[col] = ""
+
         merged = merged[OUTPUT_COLUMNS]
 
         st.success("✅ Ghép dữ liệu hoàn tất")
         st.write("Tổng số bản ghi sau ghép:", len(merged))
-        st.write("Số bản ghi có DE:", (merged["DE"] != "").sum())
-        st.write("Số bản ghi có ID:", (merged["ID"] != "").sum())
-        st.write("Số bản ghi có DE_ID:", (merged["DE_ID"] != "").sum())
+        st.write("Số bản ghi có DE:", int((merged["DE"] != "").sum()))
+        st.write("Số bản ghi có ID:", int((merged["ID"] != "").sum()))
+        st.write("Số bản ghi có DE_ID:", int((merged["DE_ID"] != "").sum()))
 
         st.dataframe(merged.head(30))
 
@@ -450,4 +467,3 @@ if not df_isi.empty and not df_scopus.empty:
 
     except Exception as e:
         st.error(f"Lỗi khi ghép dữ liệu: {e}")
-        
