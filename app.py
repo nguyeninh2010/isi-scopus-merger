@@ -2,56 +2,351 @@ import streamlit as st
 import pandas as pd
 import bibtexparser
 from io import BytesIO
+import re
 
-# Định nghĩa cột chuẩn theo Scopus
-SCOPUS_COLUMNS = [
-    "Title", "Authors", "Author full names", "Affiliations", "Author Keywords",
-    "References", "DOI", "Year", "Source title", "Volume", "Issue", "Page start", "Page end"
+OUTPUT_COLUMNS = [
+    "Title", "Authors", "Author full names", "Affiliations",
+    "DE", "ID", "DE_ID", "Keyword_Source",
+    "References", "DOI", "Year", "Source title",
+    "Volume", "Issue", "Page start", "Page end"
 ]
 
-def convert_bibtex_to_scopus_structure(bib_data):
+# =========================
+# HÀM LÀM SẠCH CƠ BẢN
+# =========================
+def clean_text(x):
+    if pd.isna(x):
+        return ""
+    x = str(x).strip()
+    x = re.sub(r"\s+", " ", x)
+    return x
+
+def clean_doi(x):
+    x = clean_text(x).lower()
+    x = x.replace("https://doi.org/", "").replace("http://doi.org/", "")
+    x = x.replace("doi:", "").strip()
+    return x
+
+def normalize_title(x):
+    x = clean_text(x).lower()
+    x = re.sub(r"[^\w\s]", "", x)
+    x = re.sub(r"\s+", " ", x).strip()
+    return x
+
+def split_pages(pages):
+    page_start, page_end = "", ""
+    pages = clean_text(pages)
+    if "-" in pages:
+        parts = pages.split("-")
+        page_start = parts[0].strip()
+        page_end = parts[-1].strip()
+    return page_start, page_end
+
+def pick_first_nonempty(entry, keys):
+    for k in keys:
+        v = entry.get(k, "")
+        if clean_text(v):
+            return v
+    return ""
+
+# =========================
+# CHUẨN HÓA TỪ KHÓA
+# =========================
+def standardize_keyword_token(token):
+    token = clean_text(token).lower()
+
+    # bỏ dấu chấm cuối hoặc đầu
+    token = token.strip(" .;,:")
+
+    # thống nhất khoảng trắng và nối
+    token = token.replace("&", "and")
+    token = re.sub(r"[-_/]+", " ", token)
+    token = re.sub(r"\s+", " ", token).strip()
+
+    # từ điển chuẩn hóa cơ bản
+    replacements = {
+        "agri tourism": "agritourism",
+        "agri tourist": "agritourism",
+        "agri tourisms": "agritourism",
+        "agri food tourism": "agrifood tourism",
+        "agro tourism": "agrotourism",
+        "agro tourisms": "agrotourism",
+        "agro tourist": "agrotourism",
+        "farm based tourism": "farm tourism",
+        "farm stay tourism": "farm tourism",
+        "rural touirsm": "rural tourism",
+        "sustainable developement": "sustainable development",
+        "behavioural intention": "behavioral intention",
+        "tourist behaviour": "tourist behavior",
+        "consumer behaviour": "consumer behavior"
+    }
+
+    if token in replacements:
+        token = replacements[token]
+
+    return token
+
+def normalize_keywords(value):
+    value = clean_text(value)
+    if not value:
+        return ""
+
+    # thống nhất dấu phân cách
+    value = value.replace("|", ";")
+    value = value.replace(",", ";")
+
+    parts = [p.strip() for p in value.split(";") if p.strip()]
+
+    seen = set()
+    result = []
+
+    for p in parts:
+        p_std = standardize_keyword_token(p)
+        if p_std and p_std not in seen:
+            seen.add(p_std)
+            result.append(p_std)
+
+    return "; ".join(result)
+
+def merge_keyword_fields(*values):
+    items = []
+    seen = set()
+
+    for value in values:
+        value = normalize_keywords(value)
+        if not value:
+            continue
+
+        for part in value.split(";"):
+            p = part.strip()
+            if p and p not in seen:
+                seen.add(p)
+                items.append(p)
+
+    return "; ".join(items)
+
+def detect_keyword_source(de, id_):
+    has_de = clean_text(de) != ""
+    has_id = clean_text(id_) != ""
+
+    if has_de and has_id:
+        return "DE+ID"
+    if has_de:
+        return "DE only"
+    if has_id:
+        return "ID only"
+    return "No keywords"
+
+# =========================
+# CHUẨN HÓA TÊN CỘT
+# =========================
+def standardize_columns(df):
+    df = df.copy()
+    df.columns = [clean_text(c) for c in df.columns]
+
+    rename_map = {
+        "Article Title": "Title",
+        "TI": "Title",
+        "Authors": "Authors",
+        "AU": "Authors",
+        "Author full names": "Author full names",
+        "Author Full Names": "Author full names",
+        "AF": "Author full names",
+        "Affiliations": "Affiliations",
+        "C1": "Affiliations",
+
+        "DE": "DE",
+        "Author Keywords": "DE",
+        "Author keywords": "DE",
+
+        "ID": "ID",
+        "Index Keywords": "ID",
+        "Keywords Plus": "ID",
+        "Keywords plus": "ID",
+
+        "References": "References",
+        "CR": "References",
+
+        "DOI": "DOI",
+        "DI": "DOI",
+
+        "Year": "Year",
+        "PY": "Year",
+
+        "Source title": "Source title",
+        "SO": "Source title",
+        "JI": "Source title",
+        "Journal": "Source title",
+
+        "Volume": "Volume",
+        "VL": "Volume",
+
+        "Issue": "Issue",
+        "IS": "Issue",
+        "Number": "Issue",
+
+        "Page start": "Page start",
+        "BP": "Page start",
+
+        "Page end": "Page end",
+        "EP": "Page end",
+    }
+
+    df = df.rename(columns={c: rename_map.get(c, c) for c in df.columns})
+
+    for col in OUTPUT_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+
+    df["DOI"] = df["DOI"].apply(clean_doi)
+    df["Title"] = df["Title"].apply(clean_text)
+    df["Title_key"] = df["Title"].apply(normalize_title)
+
+    df["DE"] = df["DE"].apply(normalize_keywords)
+    df["ID"] = df["ID"].apply(normalize_keywords)
+    df["DE_ID"] = df.apply(lambda row: merge_keyword_fields(row["DE"], row["ID"]), axis=1)
+    df["Keyword_Source"] = df.apply(lambda row: detect_keyword_source(row["DE"], row["ID"]), axis=1)
+
+    return df
+
+# =========================
+# ĐỌC BIBTEX
+# =========================
+def convert_bibtex_to_standard_structure(bib_data):
     records = []
+
     for entry in bib_data.entries:
-        pages = entry.get("pages", "")
-        page_start, page_end = "", ""
-        if "-" in pages:
-            parts = pages.split("-")
-            page_start = parts[0].strip()
-            page_end = parts[-1].strip()
+        page_start, page_end = split_pages(entry.get("pages", ""))
+
+        title = pick_first_nonempty(entry, ["title", "Title"])
+        authors = pick_first_nonempty(entry, ["author", "authors", "AU"])
+        journal = pick_first_nonempty(entry, ["journal", "journaltitle", "booktitle", "SO"])
+        doi = pick_first_nonempty(entry, ["doi", "DOI", "di", "DI"])
+        year = pick_first_nonempty(entry, ["year", "PY"])
+        volume = pick_first_nonempty(entry, ["volume", "VL"])
+        issue = pick_first_nonempty(entry, ["number", "issue", "IS"])
+        affiliations = pick_first_nonempty(entry, ["affiliations", "C1"])
+
+        de = pick_first_nonempty(
+            entry,
+            ["keywords", "keyword", "author_keywords", "de", "DE"]
+        )
+
+        id_ = pick_first_nonempty(
+            entry,
+            ["keywords-plus", "keywords_plus", "id", "ID", "index_keywords"]
+        )
+
+        references = pick_first_nonempty(
+            entry,
+            ["cited-references", "references", "CR"]
+        )
+
         record = {
-            "Title": entry.get("title", ""),
-            "Authors": entry.get("author", ""),
-            "Author full names": entry.get("author", ""),
-            "Affiliations": entry.get("affiliations", ""),
-            "Author Keywords": entry.get("keywords", "") or entry.get("keywords-plus", ""),
-            "References": entry.get("cited-references", ""),
-            "DOI": entry.get("doi", ""),
-            "Year": entry.get("year", ""),
-            "Source title": entry.get("journal", ""),
-            "Volume": entry.get("volume", ""),
-            "Issue": entry.get("number", ""),
+            "Title": title,
+            "Authors": authors,
+            "Author full names": authors,
+            "Affiliations": affiliations,
+            "DE": de,
+            "ID": id_,
+            "References": references,
+            "DOI": doi,
+            "Year": year,
+            "Source title": journal,
+            "Volume": volume,
+            "Issue": issue,
             "Page start": page_start,
             "Page end": page_end
         }
         records.append(record)
-    return pd.DataFrame(records)
 
+    df = pd.DataFrame(records)
+    return standardize_columns(df)
+
+# =========================
+# ĐỌC CSV/XLSX
+# =========================
 def convert_excel_or_csv(file):
     ext = file.name.split(".")[-1].lower()
-    if ext == "xlsx":
-        return pd.read_excel(file)
-    elif ext == "csv":
-        return pd.read_csv(file)
-    else:
-        return pd.DataFrame()
 
+    if ext == "xlsx":
+        df = pd.read_excel(file)
+    elif ext == "csv":
+        try:
+            df = pd.read_csv(file, encoding="utf-8")
+        except:
+            file.seek(0)
+            df = pd.read_csv(file, encoding="latin1")
+    else:
+        df = pd.DataFrame()
+
+    return standardize_columns(df)
+
+# =========================
+# XUẤT FILE
+# =========================
 def convert_df(df):
     output = BytesIO()
-    df.to_csv(output, index=False)
+    df.to_csv(output, index=False, encoding="utf-8-sig")
     return output.getvalue()
 
+# =========================
+# HÀM GỘP BẢN GHI
+# =========================
+def combine_two_columns(series_a, series_b):
+    return series_a.combine_first(series_b)
+
+def merge_main_records(merged_doi):
+    final = pd.DataFrame()
+    final["DOI"] = merged_doi["DOI"]
+
+    simple_cols = [
+        "Title", "Authors", "Author full names", "Affiliations",
+        "References", "Year", "Source title", "Volume", "Issue",
+        "Page start", "Page end"
+    ]
+
+    for col in simple_cols:
+        col_scopus = f"{col}_scopus"
+        col_isi = f"{col}_isi"
+
+        if col_scopus in merged_doi.columns and col_isi in merged_doi.columns:
+            final[col] = combine_two_columns(merged_doi[col_scopus], merged_doi[col_isi])
+        elif col_scopus in merged_doi.columns:
+            final[col] = merged_doi[col_scopus]
+        elif col_isi in merged_doi.columns:
+            final[col] = merged_doi[col_isi]
+        else:
+            final[col] = ""
+
+    # gộp DE và ID từ cả hai nguồn
+    final["DE"] = merged_doi.apply(
+        lambda row: merge_keyword_fields(
+            row.get("DE_scopus", ""),
+            row.get("DE_isi", "")
+        ),
+        axis=1
+    )
+
+    final["ID"] = merged_doi.apply(
+        lambda row: merge_keyword_fields(
+            row.get("ID_scopus", ""),
+            row.get("ID_isi", "")
+        ),
+        axis=1
+    )
+
+    final["DE_ID"] = final.apply(lambda row: merge_keyword_fields(row["DE"], row["ID"]), axis=1)
+    final["Keyword_Source"] = final.apply(lambda row: detect_keyword_source(row["DE"], row["ID"]), axis=1)
+    final["Title_key"] = final["Title"].apply(normalize_title)
+
+    return final
+
+# =========================
+# STREAMLIT UI
+# =========================
 st.set_page_config(page_title="Kết nối dữ liệu ISI & Scopus", layout="wide")
-st.title("📘 Kết nối dữ liệu ISI & Scopus theo chuẩn Scopus")
+st.title("📘 Kết nối dữ liệu ISI & Scopus theo chuẩn phân tích từ khóa")
 
 isi_file = st.file_uploader("📤 Chọn file ISI (.bib, .csv, .xlsx)", type=["bib", "csv", "xlsx"])
 scopus_file = st.file_uploader("📤 Chọn file Scopus (.csv, .xlsx)", type=["csv", "xlsx"])
@@ -64,9 +359,14 @@ if isi_file:
     try:
         if isi_file.name.endswith(".bib"):
             bib_data = bibtexparser.load(isi_file)
-            df_isi = convert_bibtex_to_scopus_structure(bib_data)
+            df_isi = convert_bibtex_to_standard_structure(bib_data)
         else:
             df_isi = convert_excel_or_csv(isi_file)
+
+        st.write("Số bản ghi ISI:", len(df_isi))
+        st.write("ISI có DE:", (df_isi["DE"] != "").sum())
+        st.write("ISI có ID:", (df_isi["ID"] != "").sum())
+        st.write("ISI có DE_ID:", (df_isi["DE_ID"] != "").sum())
         st.dataframe(df_isi.head(5))
     except Exception as e:
         st.error(f"Lỗi khi xử lý file ISI: {e}")
@@ -75,39 +375,79 @@ if scopus_file:
     st.subheader("🔎 Dữ liệu từ file Scopus")
     try:
         df_scopus = convert_excel_or_csv(scopus_file)
+
+        st.write("Số bản ghi Scopus:", len(df_scopus))
+        st.write("Scopus có DE:", (df_scopus["DE"] != "").sum())
+        st.write("Scopus có ID:", (df_scopus["ID"] != "").sum())
+        st.write("Scopus có DE_ID:", (df_scopus["DE_ID"] != "").sum())
         st.dataframe(df_scopus.head(5))
     except Exception as e:
         st.error(f"Lỗi khi xử lý file Scopus: {e}")
 
 if not df_isi.empty and not df_scopus.empty:
-    st.subheader("🔗 Ghép dữ liệu theo DOI")
+    st.subheader("🔗 Ghép dữ liệu")
+
     try:
-        df_isi["DOI"] = df_isi["DOI"].str.lower().str.strip()
-        df_scopus["DOI"] = df_scopus["DOI"].str.lower().str.strip()
+        # nhóm có DOI
+        isi_with_doi = df_isi[df_isi["DOI"] != ""].copy()
+        scopus_with_doi = df_scopus[df_scopus["DOI"] != ""].copy()
 
-        merged = pd.merge(df_isi, df_scopus, on="DOI", how="outer", suffixes=('_isi', '_scopus'))
+        merged_doi = pd.merge(
+            isi_with_doi,
+            scopus_with_doi,
+            on="DOI",
+            how="outer",
+            suffixes=("_isi", "_scopus")
+        )
 
-        # Ưu tiên giữ các cột từ Scopus (nếu có), hoặc từ ISI nếu không có
-        for col in SCOPUS_COLUMNS:
-            col_scopus = col + "_scopus"
-            col_isi = col + "_isi"
-            if col in merged.columns:
-                continue
-            elif col_scopus in merged.columns and col_isi in merged.columns:
-                merged[col] = merged[col_scopus].combine_first(merged[col_isi])
-                merged.drop([col_scopus, col_isi], axis=1, inplace=True)
-            elif col_scopus in merged.columns:
-                merged.rename(columns={col_scopus: col}, inplace=True)
-            elif col_isi in merged.columns:
-                merged.rename(columns={col_isi: col}, inplace=True)
+        final_doi = merge_main_records(merged_doi)
 
-        # Loại bỏ các cột phụ còn sót lại
-        merged = merged[[col for col in SCOPUS_COLUMNS if col in merged.columns]]
+        # nhóm không DOI
+        isi_no_doi = df_isi[df_isi["DOI"] == ""].copy()
+        scopus_no_doi = df_scopus[df_scopus["DOI"] == ""].copy()
 
-        st.success("✅ Ghép dữ liệu hoàn tất!")
+        no_doi = pd.concat([isi_no_doi, scopus_no_doi], ignore_index=True)
+
+        # chuẩn hóa lại và bỏ trùng theo title
+        no_doi["Title_key"] = no_doi["Title"].apply(normalize_title)
+        no_doi = no_doi.sort_values(by=["Year"], ascending=False)
+        no_doi = no_doi.drop_duplicates(subset=["Title_key"], keep="first")
+
+        # gộp lại
+        merged = pd.concat([final_doi, no_doi], ignore_index=True)
+
+        merged["DE"] = merged["DE"].apply(normalize_keywords)
+        merged["ID"] = merged["ID"].apply(normalize_keywords)
+        merged["DE_ID"] = merged.apply(lambda row: merge_keyword_fields(row["DE"], row["ID"]), axis=1)
+        merged["Keyword_Source"] = merged.apply(lambda row: detect_keyword_source(row["DE"], row["ID"]), axis=1)
+        merged["Title_key"] = merged["Title"].apply(normalize_title)
+
+        # bỏ trùng lần cuối
+        merged = merged.sort_values(by=["Year"], ascending=False)
+
+        with_doi = merged[merged["DOI"] != ""].drop_duplicates(subset=["DOI"], keep="first")
+        without_doi = merged[merged["DOI"] == ""].drop_duplicates(subset=["Title_key"], keep="first")
+
+        merged = pd.concat([with_doi, without_doi], ignore_index=True)
+
+        merged = merged[OUTPUT_COLUMNS]
+
+        st.success("✅ Ghép dữ liệu hoàn tất")
+        st.write("Tổng số bản ghi sau ghép:", len(merged))
+        st.write("Số bản ghi có DE:", (merged["DE"] != "").sum())
+        st.write("Số bản ghi có ID:", (merged["ID"] != "").sum())
+        st.write("Số bản ghi có DE_ID:", (merged["DE_ID"] != "").sum())
+
         st.dataframe(merged.head(30))
 
         csv = convert_df(merged)
-        st.download_button("📥 Tải file kết quả (CSV)", data=csv, file_name="merged_isi_scopus.csv", mime="text/csv")
+        st.download_button(
+            "📥 Tải file kết quả (CSV)",
+            data=csv,
+            file_name="merged_isi_scopus_keywords_cleaned.csv",
+            mime="text/csv"
+        )
+
     except Exception as e:
         st.error(f"Lỗi khi ghép dữ liệu: {e}")
+        
